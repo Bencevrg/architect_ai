@@ -1,7 +1,13 @@
-import ezdxf
-from typing import Dict, Any
-import os
+"""DXF generátor modul."""
+
+from __future__ import annotations
+
 import math
+import os
+from datetime import datetime
+from typing import Any, Dict, Iterable, List
+
+import ezdxf
 
 # --- Abszolút útvonal létrehozása az output mappához ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # backend/app
@@ -9,7 +15,23 @@ OUTPUT_DIR = os.path.join(BASE_DIR, "..", "..", "output")  # architect_ai/output
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
-def generate_dxf_from_structure(structure: Dict[str, Any], filename: str = "output.dxf") -> str:
+def _clean_points(points: Iterable[Iterable[float]]) -> List[List[float]]:
+    cleaned: List[List[float]] = []
+    for pair in points:
+        try:
+            x, y = pair
+            cleaned.append([float(x), float(y)])
+        except (TypeError, ValueError):
+            continue
+    return cleaned
+
+
+def _default_filename() -> str:
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    return f"floorplan_{timestamp}.dxf"
+
+
+def generate_dxf_from_structure(structure: Dict[str, Any], filename: str | None = None) -> str:
     """
     Generál egy DXF fájlt a JSON struktúra alapján.
 
@@ -26,7 +48,7 @@ def generate_dxf_from_structure(structure: Dict[str, Any], filename: str = "outp
 
     # --- Szobák rajzolása ---
     for room in structure.get("rooms", []):
-        points = room.get("points", [])
+        points = _clean_points(room.get("points", []))
         if len(points) < 3:
             continue  # polygonhoz legalább 3 pont kell
 
@@ -39,13 +61,20 @@ def generate_dxf_from_structure(structure: Dict[str, Any], filename: str = "outp
         # Szoba név középre (átlag koordináták)
         x_avg = sum(p[0] for p in points) / len(points)
         y_avg = sum(p[1] for p in points) / len(points)
-        msp.add_text(room["name"], dxfattribs={"height": 0.5}).set_pos((x_avg, y_avg))
+        msp.add_text(room.get("name", "Room"), dxfattribs={"height": 0.5}).set_pos((x_avg, y_avg))
 
     # --- Ajtók rajzolása ---
     for door in structure.get("doors", []):
-        x, y = door["x"], door["y"]
-        width = door["width"]
-        angle = math.radians(door.get("angle", 0))
+        try:
+            x = float(door["x"])
+            y = float(door["y"])
+            width = float(door["width"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if width <= 0:
+            continue
+
+        angle = math.radians(float(door.get("angle", 0)))
         swing = door.get("swing_direction", "right").lower()
 
         # Ajtó vonal
@@ -63,15 +92,22 @@ def generate_dxf_from_structure(structure: Dict[str, Any], filename: str = "outp
 
     # --- Ablakok rajzolása ---
     for window in structure.get("windows", []):
-        x, y = window["x"], window["y"]
-        width = window["width"]
-        angle = math.radians(window.get("angle", 0))
+        try:
+            x = float(window["x"])
+            y = float(window["y"])
+            width = float(window["width"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if width <= 0:
+            continue
+
+        angle = math.radians(float(window.get("angle", 0)))
         x2 = x + width * math.cos(angle)
         y2 = y + width * math.sin(angle)
         msp.add_line((x, y), (x2, y2))
 
     # --- Fájl mentése ---
-    output_path = os.path.join(OUTPUT_DIR, filename)
+    output_path = os.path.join(OUTPUT_DIR, filename or _default_filename())
     doc.saveas(output_path)
 
     return output_path

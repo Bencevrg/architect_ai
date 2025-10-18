@@ -1,86 +1,103 @@
+"""Kép feldolgozó modul az Architect AI backendhez."""
+
+from __future__ import annotations
+
 import io
-import json
-from typing import Dict, Any
+from typing import Any, Dict, List
+
 from PIL import Image
-import pytesseract
+
+try:
+    import pytesseract
+    from pytesseract import TesseractNotFoundError
+except Exception:  # pragma: no cover - opcionális függőség
+    pytesseract = None
+    TesseractNotFoundError = RuntimeError  # type: ignore
+
 from app.llm_client import generate_or_modify_structure
 
-# --- Tesseract elérési út beállítása Windows-on ---
-pytesseract.pytesseract.tesseract_cmd = r"C:\Users\Hp\AppData\Local\Programs\Tesseract-OCR\tesseract.exe"
 
+def _extract_tokens_from_text(ocr_text: str) -> Dict[str, List[str]]:
+    """Egyszerű tokenizáló az OCR szöveghez."""
 
-async def process_image_to_structure(file) -> Dict[str, Any]:
-    """
-    Feldolgoz egy PNG képet és JSON struktúrát ad vissza:
-    - szobák (rooms)
-    - ajtók (doors)
-    - ablakok (windows)
-    - metadata (area, units)
-    """
+    rooms: List[str] = []
+    doors: List[str] = []
+    windows: List[str] = []
+    sizes: List[str] = []
 
-    # --- Kép betöltése ---
-    image_bytes = await file.read()
-    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-
-    # --- OCR alkalmazása ---
-    ocr_text = pytesseract.image_to_string(image)
-
-    # --- Alap JSON szerkezet a képről ---
-    # Megjegyzés: az AI majd kiegészíti az adatokat pontos koordinátákkal
-    initial_structure = {
-        "rooms": [],
-        "doors": [],
-        "windows": [],
-        "metadata": {"area": None, "units": "m"}
-    }
-
-    # --- OCR szöveg feldolgozása ---
-    # Keresés szobanevek (R1, R2...) és méretek
-    lines = ocr_text.splitlines()
-    for line in lines:
-        line = line.strip()
+    for raw_line in ocr_text.splitlines():
+        line = raw_line.strip()
         if not line:
             continue
 
-        # Szoba felismerése
-        if line.startswith("R"):
-            name = line.split()[0]
-            initial_structure["rooms"].append({
-                "name": name,
-                "points": []  # AI generálja a pontos koordinátákat
-            })
+        upper_line = line.upper()
+        if upper_line.startswith("R"):
+            rooms.append(line)
+        elif upper_line.startswith("D"):
+            doors.append(line)
+        elif upper_line.startswith("W"):
+            windows.append(line)
+        elif "M" in upper_line:
+            sizes.append(line)
 
-        # Ajtó felismerés
-        elif line.startswith("D"):
-            initial_structure["doors"].append({
+    return {"rooms": rooms, "doors": doors, "windows": windows, "sizes": sizes}
+
+
+async def process_image_to_structure(file) -> Dict[str, Any]:
+    """PNG képet dolgoz fel, és alap JSON struktúrát ad vissza."""
+
+    image_bytes = await file.read()
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+
+    ocr_text = ""
+    if pytesseract is not None:
+        try:
+            ocr_text = pytesseract.image_to_string(image)
+        except TesseractNotFoundError:
+            ocr_text = ""
+
+    tokens = _extract_tokens_from_text(ocr_text)
+
+    initial_structure: Dict[str, Any] = {
+        "rooms": [],
+        "doors": [],
+        "windows": [],
+        "metadata": {"area": None, "units": "m"},
+    }
+
+    for name in tokens["rooms"]:
+        label = name.split()[0]
+        initial_structure["rooms"].append({"name": label, "points": []})
+
+    for _ in tokens["doors"]:
+        initial_structure["doors"].append(
+            {
                 "x": None,
                 "y": None,
                 "width": None,
                 "angle": 0,
-                "swing_direction": "right"  # alap érték, AI módosíthatja
-            })
+                "swing_direction": "right",
+            }
+        )
 
-        # Ablak felismerés
-        elif line.startswith("W"):
-            initial_structure["windows"].append({
+    for _ in tokens["windows"]:
+        initial_structure["windows"].append(
+            {
                 "x": None,
                 "y": None,
                 "width": None,
-                "angle": 0
-            })
+                "angle": 0,
+            }
+        )
 
-        # Méret felismerés (pl. 3.5m)
-        elif "m" in line:
-            try:
-                size = float(line.replace("m", "").strip())
-                # Ha van legalább 1 szoba, ideiglenesen hozzáadhatjuk
-                if initial_structure["rooms"]:
-                    initial_structure["rooms"][-1]["size"] = size
-            except ValueError:
-                continue
+    for size in tokens["sizes"]:
+        try:
+            numeric = float(size.lower().replace("m", "").strip())
+        except ValueError:
+            continue
+        if initial_structure["rooms"]:
+            initial_structure["rooms"][-1]["approx_size"] = numeric
 
-    # --- AI feldolgozás: pontos koordináták és méretek generálása ---
     prompt = "Generate exact coordinates and dimensions for this building sketch based on OCR detection."
     final_structure = generate_or_modify_structure(prompt, initial_structure)
-
     return final_structure

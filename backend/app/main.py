@@ -1,10 +1,23 @@
-import os
+from typing import Optional
+
 from dotenv import load_dotenv
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import File, FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from app.llm_client import generate_or_modify_structure
-from app.image_pipeline import process_image_to_structure
+from pydantic import BaseModel
+
 from app.dxf_generator import generate_dxf_from_structure
+from app.image_pipeline import process_image_to_structure
+from app.llm_client import generate_or_modify_structure
+
+
+load_dotenv()
+
+
+class GenerateOrModifyRequest(BaseModel):
+    """Payload modell a szöveges prompt feldolgozásához."""
+
+    prompt: str
+    current_structure: Optional[dict] = None
 
 app = FastAPI(title="Architect AI Backend")
 
@@ -26,18 +39,13 @@ async def root():
 
 # --- Szöveges prompt alapján DXF generálás / módosítás ---
 @app.post("/generate-or-modify-dxf")
-async def generate_or_modify_dxf(payload: dict):
-    """
-    payload: {
-        "prompt": str,
-        "current_structure": dict (opcionális)
-    }
-    """
-    prompt = payload.get("prompt")
+async def generate_or_modify_dxf(payload: GenerateOrModifyRequest):
+    """Teljes tervrajz generálása vagy meglévő struktúra módosítása."""
+    prompt = payload.prompt.strip()
     if not prompt:
         raise HTTPException(status_code=400, detail="Prompt megadása kötelező!")
 
-    current_structure = payload.get("current_structure")
+    current_structure = payload.current_structure
     try:
         # AI generálás / módosítás JSON tervből
         updated_structure = generate_or_modify_structure(prompt, current_structure)
@@ -71,4 +79,3 @@ async def image_to_dxf(file: UploadFile = File(...)):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Kép feldolgozási hiba: {e}")
-load_dotenv()
