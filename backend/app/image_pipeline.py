@@ -1,12 +1,21 @@
+"""Kép alapú struktúra generálás OCR + dummy LLM segítségével."""
+
+from __future__ import annotations
+
 import io
-import json
-from typing import Dict, Any
+import shutil
+from typing import Any, Dict
+
 from PIL import Image
-import pytesseract
+
 from app.llm_client import generate_or_modify_structure
 
-# --- Tesseract elérési út beállítása Windows-on ---
-pytesseract.pytesseract.tesseract_cmd = r"C:\Users\Hp\AppData\Local\Programs\Tesseract-OCR\tesseract.exe"
+try:  # pragma: no cover - Tesseract nem mindig elérhető
+    import pytesseract  # type: ignore
+except Exception:  # pragma: no cover - hiányzó függőség esetén
+    pytesseract = None  # type: ignore
+
+TESSERACT_AVAILABLE = bool(pytesseract and shutil.which("tesseract"))
 
 
 async def process_image_to_structure(file) -> Dict[str, Any]:
@@ -23,7 +32,10 @@ async def process_image_to_structure(file) -> Dict[str, Any]:
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
     # --- OCR alkalmazása ---
-    ocr_text = pytesseract.image_to_string(image)
+    if TESSERACT_AVAILABLE:
+        ocr_text = pytesseract.image_to_string(image)  # type: ignore[arg-type]
+    else:
+        ocr_text = ""
 
     # --- Alap JSON szerkezet a képről ---
     # Megjegyzés: az AI majd kiegészíti az adatokat pontos koordinátákkal
@@ -31,7 +43,7 @@ async def process_image_to_structure(file) -> Dict[str, Any]:
         "rooms": [],
         "doors": [],
         "windows": [],
-        "metadata": {"area": None, "units": "m"}
+        "metadata": {"area": None, "units": "m"},
     }
 
     # --- OCR szöveg feldolgozása ---
@@ -80,6 +92,8 @@ async def process_image_to_structure(file) -> Dict[str, Any]:
                 continue
 
     # --- AI feldolgozás: pontos koordináták és méretek generálása ---
+    if not initial_structure["rooms"]:
+        initial_structure["rooms"].append({"name": "Sketch Room", "points": []})
     prompt = "Generate exact coordinates and dimensions for this building sketch based on OCR detection."
     final_structure = generate_or_modify_structure(prompt, initial_structure)
 
