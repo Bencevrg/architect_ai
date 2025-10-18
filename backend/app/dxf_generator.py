@@ -1,7 +1,13 @@
-import ezdxf
-from typing import Dict, Any
-import os
+"""Segédfüggvény DXF fájlok előállításához a JSON struktúrából."""
+
+from __future__ import annotations
+
 import math
+import os
+from datetime import datetime
+from typing import Any, Dict
+
+import ezdxf
 
 # --- Abszolút útvonal létrehozása az output mappához ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # backend/app
@@ -9,7 +15,7 @@ OUTPUT_DIR = os.path.join(BASE_DIR, "..", "..", "output")  # architect_ai/output
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
-def generate_dxf_from_structure(structure: Dict[str, Any], filename: str = "output.dxf") -> str:
+def generate_dxf_from_structure(structure: Dict[str, Any], filename: str | None = None) -> str:
     """
     Generál egy DXF fájlt a JSON struktúra alapján.
 
@@ -71,7 +77,17 @@ def generate_dxf_from_structure(structure: Dict[str, Any], filename: str = "outp
         msp.add_line((x, y), (x2, y2))
 
     # --- Fájl mentése ---
+    if not filename:
+        base_name = structure.get("metadata", {}).get("name", "architect_ai_plan")
+        safe_name = _sanitize_filename(str(base_name))
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{safe_name}_{timestamp}.dxf"
+
     output_path = os.path.join(OUTPUT_DIR, filename)
     doc.saveas(output_path)
 
     return output_path
+
+
+def _sanitize_filename(name: str) -> str:
+    return "".join(ch for ch in name if ch.isalnum() or ch in {"-", "_"}) or "architect_ai_plan"
