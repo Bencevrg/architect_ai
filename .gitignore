@@ -1,0 +1,35 @@
+# --- Python általános ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.sqlite3
+*.env
+.env
+
+# --- Virtuális környezet ---
+venv/
+.venv/
+
+# --- Output fájlok ---
+output/
+*.dxf
+
+# --- Streamlit és cache ---
+.streamlit/
+frontend/__pycache__/
+backend/__pycache__/
+
+# --- IDE beállítások ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Tesztadatok, képek ---
+data/sketches/
+data/sample_prompts/
+*.png
+*.jpg
+*.jpeg
