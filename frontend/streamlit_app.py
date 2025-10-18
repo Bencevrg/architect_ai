@@ -1,78 +1,52 @@
-import streamlit as st
-import requests
 import json
+import requests
+import streamlit as st
 
-API_URL = "http://127.0.0.1:8000"  # Backend URL
-
-st.set_page_config(page_title="Architect AI - DXF Generator", layout="wide")
-st.title("Architect AI - DXF Generator")
-
-# --- Session állapot a tervrajzhoz ---
-if 'current_structure' not in st.session_state:
-    st.session_state['current_structure'] = None
-
-# --- Szöveges prompt ---
-st.subheader("Ház leírása vagy módosítás")
-prompt = st.text_area(
-    "Írd le a ház alaprajzát, vagy adj módosítást a meglévő tervrajzra",
-    height=120
-)
-
-# --- Képfeltöltés ---
-st.subheader("Vázlat feltöltése (opcionális)")
-uploaded_file = st.file_uploader("Tölts fel egy PNG képet", type=["png"])
-
-# --- DXF generálása / módosítás ---
-if st.button("DXF generálása / módosítás"):
-    if not prompt and not uploaded_file:
-        st.error("Adj meg promptot vagy tölts fel képet!")
-    else:
-        payload = {"prompt": prompt}
-
-        if st.session_state['current_structure']:
-            payload["current_structure"] = st.session_state['current_structure']
-
+st.set_page_config(page_title="Architect AI – MVP", layout="wide")
+BACKEND_URL = "http://localhost:8000"
+st.title("🏗️ Architect AI – MVP (Dummy LLM)")
+with st.sidebar:
+    st.markdown("**Backend**: ")
+    st.code(BACKEND_URL, language="text")
+    if st.button("Health check"):
         try:
-            # Ha van feltöltött kép, először OCR + AI pipeline
-            if uploaded_file:
-                files = {"file": (uploaded_file.name, uploaded_file, "image/png")}
-                r = requests.post(f"{API_URL}/image-to-dxf", files=files)
-                r.raise_for_status()
-                image_result = r.json()
-                # A képről OCR-rel generált struktúrát felhasználjuk a prompt mellé
-                payload["current_structure"] = image_result.get("structure")
-
-            # AI feldolgozás (szöveges prompt + meglévő struktúra)
-            r2 = requests.post(f"{API_URL}/generate-or-modify-dxf", json=payload)
-            r2.raise_for_status()
-            result = r2.json()
-
-            # Mentés session-be
-            st.session_state['current_structure'] = result.get("structure")
-
-            # --- Megjelenítés ---
-            st.subheader("JSON tervrajz")
-            st.json(st.session_state['current_structure'])
-
-            st.subheader("DXF fájl elérhetősége")
-            dxf_file = result.get("file")
-            st.write(dxf_file)
-
-            # Letöltés link
-            with open(dxf_file, "rb") as f:
-                st.download_button(
-                    label="DXF letöltése",
-                    data=f,
-                    file_name="output.dxf",
-                    mime="application/dxf"
-                )
-
-        except requests.exceptions.RequestException as e:
-            st.error(f"Hálózati hiba: {e}")
+            r = requests.get(f"{BACKEND_URL}/health", timeout=5)
+            st.success(r.json())
         except Exception as e:
-            st.error(f"Hiba történt a DXF generálás során: {e}")
+            st.error(str(e))
 
-# --- Új terv létrehozása ---
-if st.button("Új terv"):
-    st.session_state['current_structure'] = None
-    st.success("Kezdeti terv törölve. Adj új promptot vagy tölts fel képet!")
+st.subheader("1) Terv generálása promptból")
+prompt = st.text_input("Szöveges prompt", "68 négyzetméteres ház, 2 hálószoba, 4 ablak, 1 ajtó")
+if st.button("Generálás"):
+    with st.spinner("Generálás..."):
+        r = requests.post(f"{BACKEND_URL}/generate-or-modify-dxf", json={"prompt": prompt})
+        if r.ok:
+            st.session_state["plan"] = r.json()["plan"]
+            st.session_state["dxf_path"] = r.json()["dxf_path"]
+        else:
+            st.error(r.text)
+            
+st.subheader("2) Módosítás meglévő terven")
+mod = st.text_input("Módosítási utasítás (pl.: 'R2 nagyobb 1 méterrel' vagy 'ajtó jobbra 0.5 m')", "")
+if st.button("Módosítás alkalmazása"):
+    plan = st.session_state.get("plan")
+    if not plan:
+        st.warning("Előbb generálj egy tervet!")
+    else:
+        r = requests.post(f"{BACKEND_URL}/generate-or-modify-dxf", json={"prompt": mod, "existing_plan": plan})
+        if r.ok:
+            st.session_state["plan"] = r.json()["plan"]
+            st.session_state["dxf_path"] = r.json()["dxf_path"]
+        else:
+            st.error(r.text)
+            
+st.divider()
+col1, col2 = st.columns(2)
+with col1:
+    st.markdown("**Aktuális terv (JSON):**")
+    st.json(st.session_state.get("plan", {}))
+with col2:
+    st.markdown("**DXF fájl helye a szerveren:**")
+    st.code(st.session_state.get("dxf_path", "—"))
+    if st.session_state.get("dxf_path"):
+        st.info("A Streamlit demo lokálisan fut: töltsd le a /output mappából vagy szolgáld ki egy statikus route-tal.")

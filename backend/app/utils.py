@@ -1,11 +1,9 @@
-# Segédfüggvények pl. JSON validáció, logging
+from __future__ import annotations
+from pathlib import Path
 
-import json
 
-def validate_json(data):
-    try:
-        json.dumps(data)
-        return True
-    except Exception as e:
-        print("Invalid JSON:", e)
-        return False
+def output_path(filename: str) -> str:
+    root = Path(__file__).resolve().parents[2] # architect_ai/
+    out = root / "output" / filename
+    out.parent.mkdir(parents=True, exist_ok=True)
+    return str(out)

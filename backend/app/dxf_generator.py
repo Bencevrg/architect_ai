@@ -1,77 +1,72 @@
+from __future__ import annotations
+from math import cos, sin, radians
+from pathlib import Path
 import ezdxf
-from typing import Dict, Any
-import os
-import math
-
-# --- Abszolút útvonal létrehozása az output mappához ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # backend/app
-OUTPUT_DIR = os.path.join(BASE_DIR, "..", "..", "output")  # architect_ai/output
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+from .schemas import Plan, Room, Door, Window
 
 
-def generate_dxf_from_structure(structure: Dict[str, Any], filename: str = "output.dxf") -> str:
-    """
-    Generál egy DXF fájlt a JSON struktúra alapján.
+ROOM_LAYER = "ROOMS"
+DOOR_LAYER = "DOORS"
+WINDOW_LAYER = "WINDOWS"
+TEXT_LAYER = "TEXT"
 
-    structure: {
-        "rooms": [{"name": "R1", "points": [[x1,y1], [x2,y2], ...]}],
-        "doors": [{"x": , "y": , "width": , "angle": , "swing_direction": "left/right"}],
-        "windows": [{"x": , "y": , "width": , "angle": 0}],
-        "metadata": {"area": , "units": "m"}
-    }
-    """
+def _centroid(points: list[list[float]]):
+    x = sum(p[0] for p in points)/len(points)
+    y = sum(p[1] for p in points)/len(points)
+    return x, y
 
-    doc = ezdxf.new(dxfversion="R2010")
+
+
+
+def add_room(msp, room: Room):
+    msp.add_lwpolyline(room.points + [room.points[0]], dxfattribs={"layer": ROOM_LAYER, "closed": True})
+    cx, cy = _centroid(room.points)
+    msp.add_text(room.name, dxfattribs={"height": 0.3, "layer": TEXT_LAYER, "insert": (cx, cy)})
+
+
+
+
+
+def add_door(msp, door: Door):
+    # ajtó vonal + nyílás ív
+    x, y = door.x, door.y
+    w = door.width
+    msp.add_line((x - w/2, y), (x + w/2, y), dxfattribs={"layer": DOOR_LAYER})
+# ív a nyitásirány jelzésére: 90°-os ív
+    radius = w
+    start = 0 if door.swing_direction == "right" else 180
+    end = 90 if door.swing_direction == "right" else 270
+    msp.add_arc(center=(x, y), radius=radius, start_angle=start, end_angle=end, dxfattribs={"layer": DOOR_LAYER})
+
+
+
+
+def add_window(msp, window: Window):
+    # ablak mint rövid szakasz a falon, a szög figyelembevétele nélkül (MVP)
+    x, y = window.x, window.y
+    half = window.width/2
+    msp.add_line((x - half, y), (x + half, y), dxfattribs={"layer": WINDOW_LAYER})
+
+
+
+
+def plan_to_dxf(plan: Plan, out_path: str | Path) -> str:
+    doc = ezdxf.new(setup=True)
+    for layer in [ROOM_LAYER, DOOR_LAYER, WINDOW_LAYER, TEXT_LAYER]:
+        if layer not in doc.layers:
+            doc.layers.add(name=layer)
     msp = doc.modelspace()
 
-    # --- Szobák rajzolása ---
-    for room in structure.get("rooms", []):
-        points = room.get("points", [])
-        if len(points) < 3:
-            continue  # polygonhoz legalább 3 pont kell
 
-        # Polygon bezárása
-        polygon_points = points + [points[0]]
+    for r in plan.rooms:
+        add_room(msp, r)
+    for d in plan.doors:
+        add_door(msp, d)
+    for w in plan.windows:
+        add_window(msp, w)
 
-        # LWPolyline létrehozása
-        msp.add_lwpolyline(polygon_points, close=True)
 
-        # Szoba név középre (átlag koordináták)
-        x_avg = sum(p[0] for p in points) / len(points)
-        y_avg = sum(p[1] for p in points) / len(points)
-        msp.add_text(room["name"], dxfattribs={"height": 0.5}).set_pos((x_avg, y_avg))
-
-    # --- Ajtók rajzolása ---
-    for door in structure.get("doors", []):
-        x, y = door["x"], door["y"]
-        width = door["width"]
-        angle = math.radians(door.get("angle", 0))
-        swing = door.get("swing_direction", "right").lower()
-
-        # Ajtó vonal
-        x2 = x + width * math.cos(angle)
-        y2 = y + width * math.sin(angle)
-        msp.add_line((x, y), (x2, y2))
-
-        # Swing ív (félkör)
-        start_angle = math.degrees(angle)
-        if swing == "left":
-            end_angle = start_angle + 90
-        else:
-            end_angle = start_angle - 90
-        msp.add_arc(center=(x, y), radius=width, start_angle=start_angle, end_angle=end_angle)
-
-    # --- Ablakok rajzolása ---
-    for window in structure.get("windows", []):
-        x, y = window["x"], window["y"]
-        width = window["width"]
-        angle = math.radians(window.get("angle", 0))
-        x2 = x + width * math.cos(angle)
-        y2 = y + width * math.sin(angle)
-        msp.add_line((x, y), (x2, y2))
-
-    # --- Fájl mentése ---
-    output_path = os.path.join(OUTPUT_DIR, filename)
-    doc.saveas(output_path)
-
-    return output_path
+    out_path = str(out_path)
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    doc.saveas(out_path)
+    return out_path

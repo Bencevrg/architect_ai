@@ -1,74 +1,47 @@
-import os
-from dotenv import load_dotenv
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from __future__ import annotations
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.llm_client import generate_or_modify_structure
-from app.image_pipeline import process_image_to_structure
-from app.dxf_generator import generate_dxf_from_structure
+from .schemas import GenerateRequest, GenerateResponse, Plan
+from .llm_client import client
+from .dxf_generator import plan_to_dxf
+from .utils import output_path
+import time
 
-app = FastAPI(title="Architect AI Backend")
 
-# --- CORS beállítás (Frontend kommunikációhoz) ---
+app = FastAPI(title="Architect AI – MVP (dummy)")
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # vagy frontend URL pl. "http://localhost:8501"
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# --- Alap endpoint az egész backendhez ---
-@app.get("/")
-async def root():
-    return {"message": "Architect AI Backend fut"}
+@app.get("/health")
+async def health():
+    return {"ok": True}
 
 
-# --- Szöveges prompt alapján DXF generálás / módosítás ---
-@app.post("/generate-or-modify-dxf")
-async def generate_or_modify_dxf(payload: dict):
-    """
-    payload: {
-        "prompt": str,
-        "current_structure": dict (opcionális)
-    }
-    """
-    prompt = payload.get("prompt")
-    if not prompt:
-        raise HTTPException(status_code=400, detail="Prompt megadása kötelező!")
-
-    current_structure = payload.get("current_structure")
-    try:
-        # AI generálás / módosítás JSON tervből
-        updated_structure = generate_or_modify_structure(prompt, current_structure)
-
-        # DXF generálás
-        output_file = generate_dxf_from_structure(updated_structure)
-
-        return {
-            "structure": updated_structure,
-            "file": output_file
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.post("/generate-or-modify-dxf", response_model=GenerateResponse)
+async def generate_or_modify(req: GenerateRequest):
+    if req.existing_plan is None:
+        plan: Plan = client.generate(req.prompt)
+    else:
+        plan: Plan = client.modify(req.existing_plan, req.prompt)
 
 
-# --- Kép alapján struktúra generálása ---
+    ts = int(time.time())
+    dxf_file = output_path(f"plan_{ts}.dxf")
+    plan_to_dxf(plan, dxf_file)
+
+
+    return GenerateResponse(plan=plan, dxf_path=dxf_file)
+
+
+# MVP-ben az OCR pipeline még nem kész, csak váz
 @app.post("/image-to-dxf")
-async def image_to_dxf(file: UploadFile = File(...)):
-    """
-    PNG képet vár, OCR + AI pipeline feldolgozza.
-    Visszaadja a generált JSON tervrajzot.
-    """
-    if not file.filename.lower().endswith(".png"):
-        raise HTTPException(status_code=400, detail="Csak PNG képfájl elfogadott.")
-
-    try:
-        # Kép feldolgozása OCR + AI pipeline segítségével
-        structure = await process_image_to_structure(file)
-        return {"structure": structure}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Kép feldolgozási hiba: {e}")
-load_dotenv()
+async def image_to_dxf():
+    return {"status": "not_implemented_yet"}
